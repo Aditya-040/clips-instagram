@@ -31,6 +31,15 @@ Daily Instagram Reel poster for short clips cut from YouTube videos. Same struct
 - Secrets: `IG_USER_ID`, `IG_ACCESS_TOKEN` (starts with `IG`, not `EAA`), `GH_PAT`
   (fine-grained, this repo only, "Secrets: Read and write").
 
+## YouTube Shorts
+
+After each Reel is published, `post.mjs` uploads the same mp4 to YouTube as a Short (title = hook line
++ `#Shorts`, description = caption, category Gaming) and records `youtube: <videoId>` in
+`state/posted.json`. A YouTube failure only warns; the Reel stays posted. Secrets `YT_CLIENT_ID`,
+`YT_CLIENT_SECRET`, `YT_REFRESH_TOKEN` come from `autopost\youtube_auth.py` (one-time sign-in);
+without them the upload is skipped. Unaudited Google Cloud projects get uploads locked to private,
+and the default quota allows only a few uploads a day.
+
 ## Caption rules
 
 Hook line (quote from the clip or bold statement, 1–2 emojis) → 2–3 short emotional lines about what

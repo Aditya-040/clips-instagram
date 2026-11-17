@@ -104,11 +104,45 @@ async function main() {
   await waitReady(c.id);
   const pub = await ig("POST", `/${USER}/media_publish`, { creation_id: c.id });
   console.log(`✅ Published ${post.id} → media id ${pub.id}`);
-  state.posted.push({ id: post.id, media_id: pub.id, date: todayIST, ...(FORCE && { forced: true }) });
+  const entry = { id: post.id, media_id: pub.id, date: todayIST, ...(FORCE && { forced: true }) };
+  state.posted.push(entry);
+  save(); // the Reel is live: record it before anything else can fail
+  try {
+    const yt = await youtube(post);
+    if (yt) { entry.youtube = yt.id; console.log(`▶️ YouTube Short ${yt.id} (${yt.privacy})`); }
+  } catch (e) { warn(`${post.id}: YouTube upload failed (the Reel is posted): ${e.message}`); }
   rmSync(post.video); // posted: drop it from the tree so the queue folder stays small
   if (cover.cover_url) rmSync(post.cover);
   save();
   if (left < 3) warn(`Only ${left} Reel(s) left in the queue.`);
+}
+
+// Same video as a YouTube Short. Needs secrets YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN
+// (made once with autopost\youtube_auth.py); without them this is skipped.
+async function youtube(post) {
+  const { YT_CLIENT_ID: id, YT_CLIENT_SECRET: secret, YT_REFRESH_TOKEN: refresh } = process.env;
+  if (!id || !secret || !refresh) return null;
+  const tok = await (await fetch("https://oauth2.googleapis.com/token", { method: "POST",
+    body: new URLSearchParams({ client_id: id, client_secret: secret, refresh_token: refresh, grant_type: "refresh_token" }) })).json();
+  if (!tok.access_token) throw new Error("token refresh: " + JSON.stringify(tok.error_description || tok.error || tok));
+  console.log(`::add-mask::${tok.access_token}`);
+  const clean = (s) => s.replace(/[<>]/g, ""); // YouTube rejects angle brackets in titles/descriptions
+  const lines = post.caption.split("\n").map((s) => s.trim()).filter(Boolean);
+  const title = clean(lines[0].replace(/#\S+/g, "").trim()).slice(0, 90).trim() + " #Shorts";
+  const tags = [...post.caption.matchAll(/#(\w+)/g)].map((m) => m[1]).slice(0, 15);
+  const video = readFileSync(post.video);
+  const init = await fetch("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tok.access_token}`, "Content-Type": "application/json; charset=UTF-8",
+               "X-Upload-Content-Type": "video/mp4", "X-Upload-Content-Length": String(video.length) },
+    body: JSON.stringify({
+      snippet: { title, description: clean(post.caption) + "\n\n#Shorts", tags, categoryId: "20" }, // 20 = Gaming
+      status: { privacyStatus: "public", selfDeclaredMadeForKids: false } }) });
+  if (!init.ok) throw new Error(`upload start ${init.status}: ${(await init.text()).slice(0, 300)}`);
+  const up = await fetch(init.headers.get("location"), { method: "PUT", headers: { "Content-Type": "video/mp4" }, body: video });
+  const j = await up.json();
+  if (!up.ok) throw new Error(`upload ${up.status}: ${JSON.stringify(j.error || j).slice(0, 300)}`);
+  return { id: j.id, privacy: j.status?.privacyStatus };
 }
 
 function save() { writeFileSync("state/posted.json", JSON.stringify(state, null, 2) + "\n"); }
