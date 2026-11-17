@@ -9,8 +9,10 @@ Daily Instagram Reel poster for short clips cut from YouTube videos. Same struct
    (needs the local OpenShorts Docker stack running).
 2. OpenShorts cuts ~10 vertical 25–35 s clips with burned captions and a hook; Gemini writes one
    caption per clip from its transcript.
-3. `autopost.py` re-encodes the audio to 48 kHz (Reels limit; video stream copied), copies each clip
-   to `queue/rNNN.mp4`, writes a cover `queue/rNNN.jpg` (clip frame + big "GTA 5"/"GTA 6" label + hook line), appends `{id, video, cover, caption, source}` to `queue/manifest.json`, commits and pushes.
+3. `autopost.py` puts the clip's best 3 s (Gemini's pick) in front as a cold-open teaser, re-encodes
+   (audio 48 kHz, the Reels limit), copies each clip
+   to `queue/rNNN.mp4`, writes a cover `queue/rNNN.jpg` (AI art from `IMAGE_MODEL` when the Gemini key has billing, else the punched-up best frame; plus a big
+   "GTA 5"/"GTA 6" label and 2-5 word cover text), appends `{id, video, cover, caption, source}` to `queue/manifest.json`, commits and pushes.
 
 ## Posting (`scripts/post.mjs`, `.github/workflows/post.yml`)
 
