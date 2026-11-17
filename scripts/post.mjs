@@ -98,13 +98,15 @@ async function main() {
   console.log(`Posting ${post.id} (${post.video}). ${left} left in queue after this.`);
   if (DRY) { console.log("  ", rawUrl(post.video)); console.log(post.caption); process.exit(DONE); }
 
+  const cover = post.cover && existsSync(post.cover) ? { cover_url: rawUrl(post.cover) } : {};
   const c = await ig("POST", `/${USER}/media`, {
-    media_type: "REELS", video_url: rawUrl(post.video), caption: post.caption, share_to_feed: "true" });
+    media_type: "REELS", video_url: rawUrl(post.video), caption: post.caption, share_to_feed: "true", ...cover });
   await waitReady(c.id);
   const pub = await ig("POST", `/${USER}/media_publish`, { creation_id: c.id });
   console.log(`✅ Published ${post.id} → media id ${pub.id}`);
   state.posted.push({ id: post.id, media_id: pub.id, date: todayIST, ...(FORCE && { forced: true }) });
   rmSync(post.video); // posted: drop it from the tree so the queue folder stays small
+  if (cover.cover_url) rmSync(post.cover);
   save();
   if (left < 3) warn(`Only ${left} Reel(s) left in the queue.`);
 }

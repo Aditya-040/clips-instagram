@@ -10,12 +10,12 @@ Daily Instagram Reel poster for short clips cut from YouTube videos. Same struct
 2. OpenShorts cuts ~10 vertical 25–35 s clips with burned captions and a hook; Gemini writes one
    caption per clip from its transcript.
 3. `autopost.py` re-encodes the audio to 48 kHz (Reels limit; video stream copied), copies each clip
-   to `queue/rNNN.mp4`, appends `{id, video, caption, source}` to `queue/manifest.json`, commits and pushes.
+   to `queue/rNNN.mp4`, writes a cover `queue/rNNN.jpg` (clip frame + big "GTA 5"/"GTA 6" label + hook line), appends `{id, video, cover, caption, source}` to `queue/manifest.json`, commits and pushes.
 
 ## Posting (`scripts/post.mjs`, `.github/workflows/post.yml`)
 
 - Instagram API with Instagram login (`graph.instagram.com`): creates a `REELS` container from the
-  clip's raw.githubusercontent URL (this repo must stay **public** for that), waits for `FINISHED`
+  clip's raw.githubusercontent URL (plus `cover_url` for the cover jpg) (this repo must stay **public** for that), waits for `FINISHED`
   (up to 10 min), publishes, records `{id, media_id, date}` in `state/posted.json`, then deletes the
   posted mp4 from `queue/`.
 - Up to `POSTS_PER_DAY` (10) Reels per posting day, one every 30 minutes on the :00/:30 clock, all
@@ -33,7 +33,8 @@ Daily Instagram Reel poster for short clips cut from YouTube videos. Same struct
 
 Hook line (quote from the clip or bold statement, 1–2 emojis) → 2–3 short emotional lines about what
 is actually said in the clip → CTA (question / save this / tag a friend) ending 👇 → 10–12 hashtags.
-Never invent facts that are not in the clip.
+Never invent facts that are not in the clip. Gemini tags each clip GTA 5 / GTA 6 (GTA Online = GTA 5)
+from the video title + clip; the hook line always names the game and the hashtags carry #GTA5 / #GTA6.
 
 ## Refill
 
