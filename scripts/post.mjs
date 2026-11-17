@@ -1,0 +1,110 @@
+// Publishes the next unposted Reel from queue/manifest.json to Instagram.
+// Runs in GitHub Actions. Needs secrets IG_USER_ID and IG_ACCESS_TOKEN.
+// Optional secret GH_PAT (fine-grained token with "Secrets: read & write" on this repo)
+// lets it save a refreshed Instagram token automatically.
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+
+const API = "https://graph.instagram.com/v23.0";
+const clean = (v) => (v || "").trim().replace(/^["']|["']$/g, "").trim();
+const USER = clean(process.env.IG_USER_ID);
+let TOKEN = clean(process.env.IG_ACCESS_TOKEN);
+const REPO = process.env.GITHUB_REPOSITORY; // owner/name
+const BRANCH = process.env.GITHUB_REF_NAME || "main";
+const FORCE = process.env.FORCE === "true";
+const DRY = process.env.DRY_RUN === "true";
+
+if (!USER || !TOKEN) fail("Missing IG_USER_ID or IG_ACCESS_TOKEN secret.");
+console.log(`::add-mask::${TOKEN}`);
+if (TOKEN.startsWith("EAA")) fail("IG_ACCESS_TOKEN is a Facebook token (starts with EAA). Generate the token under Instagram API > 'API setup with Instagram login' > 'Generate access tokens' instead; that one starts with IG.");
+
+const manifest = JSON.parse(readFileSync("queue/manifest.json", "utf8"));
+const state = JSON.parse(readFileSync("state/posted.json", "utf8"));
+// "Posting day" in IST, rolling over at 6 AM instead of midnight, so a run delayed past midnight
+// still counts for the evening it belongs to (and doesn't block the next evening's post).
+const todayIST = new Date(Date.now() + (5.5 - 6) * 3600e3).toISOString().slice(0, 10);
+
+function fail(msg) { msg = String(msg); if (TOKEN) msg = msg.replaceAll(TOKEN, "***"); console.log("::error title=Instagram post failed::" + msg.replace(/\n/g, " ")); process.exit(1); }
+function warn(msg) { console.log("::warning::" + msg); }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const rawUrl = (p) => `https://raw.githubusercontent.com/${REPO}/${BRANCH}/${p}`;
+
+async function ig(method, path, params = {}) {
+  const url = new URL(API + path);
+  const body = new URLSearchParams({ ...params, access_token: TOKEN });
+  const res = method === "GET"
+    ? await fetch(url + "?" + body)
+    : await fetch(url, { method, body });
+  const json = await res.json();
+  if (!res.ok || json.error) throw new Error(`${path}: ${JSON.stringify(json.error || json)}`);
+  return json;
+}
+
+async function waitReady(id) {
+  // Instagram transcodes the video before it can be published: minutes, not seconds.
+  for (let i = 0; i < 60; i++) {
+    const { status_code, status } = await ig("GET", `/${id}`, { fields: "status_code,status" });
+    if (status_code === "FINISHED") return;
+    if (status_code === "ERROR" || status_code === "EXPIRED") throw new Error(`container ${id} ${status_code}: ${status || ""}`);
+    await sleep(10000);
+  }
+  throw new Error(`container ${id} not ready after 10 minutes`);
+}
+
+async function refreshToken() {
+  // Long-lived Instagram tokens last 60 days; refresh once a week to keep them alive.
+  const res = await fetch(`https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=${TOKEN}`);
+  const j = await res.json();
+  if (!j.access_token) { warn("Token refresh failed: " + JSON.stringify(j.error || j)); return; }
+  console.log(`🔑 Token refreshed, valid ~${Math.round(j.expires_in / 86400)} more days.`);
+  if (j.access_token !== TOKEN) {
+    console.log(`::add-mask::${j.access_token}`);
+    TOKEN = j.access_token;
+    if (process.env.GH_PAT) {
+      try {
+        // token goes in via stdin, never on the command line (command lines can end up in logs)
+        execFileSync("gh", ["secret", "set", "IG_ACCESS_TOKEN", "--repo", REPO], {
+          input: TOKEN, env: { ...process.env, GH_TOKEN: process.env.GH_PAT }, stdio: ["pipe", "ignore", "pipe"] });
+        console.log("🔑 Saved new token to repo secret.");
+      } catch (err) {
+        const why = String(err.stderr || "").replaceAll(TOKEN, "***").split("\n")[0];
+        warn("Couldn't save the refreshed token (GH_PAT needs 'Secrets: Read and write' on this repo): " + why);
+      }
+    } else {
+      warn("Instagram issued a new token string but GH_PAT isn't set, so it can't be saved. Update IG_ACCESS_TOKEN manually within 60 days.");
+    }
+  }
+  state.lastRefresh = todayIST;
+}
+
+async function main() {
+  const daysSinceRefresh = state.lastRefresh ? (Date.parse(todayIST) - Date.parse(state.lastRefresh)) / 864e5 : 99;
+  if (!DRY && daysSinceRefresh >= 7) await refreshToken();
+
+  if (state.lastDate === todayIST && !FORCE) {
+    console.log(`Already posted today (${todayIST}). Nothing to do.`);
+    return save();
+  }
+  const done = new Set(state.posted.map((p) => p.id));
+  const post = manifest.find((p) => !done.has(p.id));
+  if (!post) fail("Queue is empty: no unposted Reels left. Run autopost.py with a new YouTube link.");
+  if (!existsSync(post.video)) fail(`${post.id}: ${post.video} is missing from the repo.`);
+  const left = manifest.filter((p) => !done.has(p.id)).length - 1;
+  console.log(`Posting ${post.id} (${post.video}). ${left} left in queue after this.`);
+  if (DRY) { console.log("  ", rawUrl(post.video)); console.log(post.caption); return; }
+
+  const c = await ig("POST", `/${USER}/media`, {
+    media_type: "REELS", video_url: rawUrl(post.video), caption: post.caption, share_to_feed: "true" });
+  await waitReady(c.id);
+  const pub = await ig("POST", `/${USER}/media_publish`, { creation_id: c.id });
+  console.log(`✅ Published ${post.id} → media id ${pub.id}`);
+  state.posted.push({ id: post.id, media_id: pub.id, date: todayIST });
+  state.lastDate = todayIST;
+  rmSync(post.video); // posted: drop it from the tree so the queue folder stays small
+  save();
+  if (left < 3) warn(`Only ${left} Reel(s) left in the queue.`);
+}
+
+function save() { writeFileSync("state/posted.json", JSON.stringify(state, null, 2) + "\n"); }
+
+main().catch((e) => { save(); fail(e.message); });
