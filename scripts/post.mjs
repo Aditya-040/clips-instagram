@@ -83,7 +83,8 @@ async function main() {
   const daysSinceRefresh = state.lastRefresh ? (Date.parse(todayIST) - Date.parse(state.lastRefresh)) / 864e5 : 99;
   if (!DRY && daysSinceRefresh >= 7) await refreshToken();
 
-  const postedToday = state.posted.filter((p) => p.date === todayIST).length;
+  // forced posts (manual tests / extras) don't use up the day's scheduled slots
+  const postedToday = state.posted.filter((p) => p.date === todayIST && !p.forced).length;
   if (postedToday >= PER_DAY && !FORCE) {
     console.log(`Already posted ${postedToday}/${PER_DAY} today (${todayIST}). Nothing to do.`);
     save(); process.exit(DONE);
@@ -102,7 +103,7 @@ async function main() {
   await waitReady(c.id);
   const pub = await ig("POST", `/${USER}/media_publish`, { creation_id: c.id });
   console.log(`✅ Published ${post.id} → media id ${pub.id}`);
-  state.posted.push({ id: post.id, media_id: pub.id, date: todayIST });
+  state.posted.push({ id: post.id, media_id: pub.id, date: todayIST, ...(FORCE && { forced: true }) });
   rmSync(post.video); // posted: drop it from the tree so the queue folder stays small
   save();
   if (left < 3) warn(`Only ${left} Reel(s) left in the queue.`);
