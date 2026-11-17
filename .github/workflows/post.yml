@@ -18,6 +18,10 @@ on:
         description: "Post even if today's quota is already used"
         type: boolean
         default: false
+      per_day:
+        description: "Reels allowed today (raise it to post a second batch the same day)"
+        type: number
+        default: 10
       dry_run:
         description: "Dry run (show what would be posted, don't post)"
         type: boolean
@@ -31,7 +35,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  POSTS_PER_DAY: 10
+  POSTS_PER_DAY: ${{ inputs.per_day || 10 }}
 
 jobs:
   post:
