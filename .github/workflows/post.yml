@@ -1,20 +1,21 @@
 name: Post Reel to Instagram
 
+# One run per day posts up to POSTS_PER_DAY Reels, one every 30 minutes
+# (on the :00 / :30 clock), starting when it is triggered.
 on:
-  # Main trigger: a daily Claude scheduled task (7:15 PM IST) pushes trigger/request.txt.
+  # Main trigger: a daily Claude scheduled task (12:00 PM IST) pushes trigger/request.txt.
   push:
     branches: [main]
     paths: ["trigger/**"]
   schedule:
-    # Backup only: GitHub's free scheduler often runs hours late.
-    # The script posts at most once per posting day, so backups never double-post.
-    - cron: "47 13 * * *" # 7:17 PM IST
-    - cron: "33 14 * * *" # 8:03 PM IST
-    - cron: "19 15 * * *" # 8:49 PM IST
+    # Backup only: GitHub's free scheduler often runs hours late. A backup that
+    # starts after the main run sees today's count and posts only what is missing.
+    - cron: "40 6 * * *" # 12:10 PM IST
+    - cron: "10 8 * * *" # 1:40 PM IST
   workflow_dispatch:
     inputs:
       force:
-        description: "Post even if something was already posted today"
+        description: "Post even if today's quota is already used"
         type: boolean
         default: false
       dry_run:
@@ -29,26 +30,41 @@ concurrency:
   group: instagram-post
   cancel-in-progress: false
 
+env:
+  POSTS_PER_DAY: 10
+
 jobs:
   post:
     runs-on: ubuntu-latest
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: main
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-      - name: Publish next Reel
+      - name: Publish Reels every 30 minutes
         env:
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           GH_PAT: ${{ secrets.GH_PAT }}
           FORCE: ${{ inputs.force }}
           DRY_RUN: ${{ inputs.dry_run }}
-        run: node scripts/post.mjs
-      - name: Save posting state
-        if: always()
         run: |
           git config user.name "clips-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A state queue
-          git diff --cached --quiet || (git commit -m "Posted $(date -u +%F)" && git pull --rebase && git push)
+          fails=0
+          for i in $(seq 1 $((POSTS_PER_DAY + 2))); do
+            git pull -q --rebase origin main   # latest state: never re-post what another run posted
+            rc=0; node scripts/post.mjs || rc=$?
+            git add -A state queue
+            git diff --cached --quiet || (git commit -qm "Posted $(date -u +%FT%H:%MZ)" && git pull -q --rebase origin main && git push -q)
+            [ $rc -eq 3 ] && break                       # today's quota done or queue empty
+            [ $rc -ne 0 ] && fails=$((fails + 1))        # a failed post is retried next slot
+            [ "$FORCE" = "true" ] && break               # force = one extra post, not a loop
+            # next :00/:30 slot, at least 10 minutes away
+            wait=$(( 1800 - $(date +%s) % 1800 )); [ $wait -lt 600 ] && wait=$((wait + 1800))
+            echo "Next post in $((wait / 60)) min"; sleep $wait
+          done
+          [ $fails -eq 0 ]

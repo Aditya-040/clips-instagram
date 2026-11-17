@@ -13,6 +13,8 @@ const REPO = process.env.GITHUB_REPOSITORY; // owner/name
 const BRANCH = process.env.GITHUB_REF_NAME || "main";
 const FORCE = process.env.FORCE === "true";
 const DRY = process.env.DRY_RUN === "true";
+const PER_DAY = Number(process.env.POSTS_PER_DAY || 10);
+const DONE = 3; // exit code: nothing left to post today, the workflow loop stops
 
 if (!USER || !TOKEN) fail("Missing IG_USER_ID or IG_ACCESS_TOKEN secret.");
 console.log(`::add-mask::${TOKEN}`);
@@ -81,17 +83,19 @@ async function main() {
   const daysSinceRefresh = state.lastRefresh ? (Date.parse(todayIST) - Date.parse(state.lastRefresh)) / 864e5 : 99;
   if (!DRY && daysSinceRefresh >= 7) await refreshToken();
 
-  if (state.lastDate === todayIST && !FORCE) {
-    console.log(`Already posted today (${todayIST}). Nothing to do.`);
-    return save();
+  const postedToday = state.posted.filter((p) => p.date === todayIST).length;
+  if (postedToday >= PER_DAY && !FORCE) {
+    console.log(`Already posted ${postedToday}/${PER_DAY} today (${todayIST}). Nothing to do.`);
+    save(); process.exit(DONE);
   }
   const done = new Set(state.posted.map((p) => p.id));
   const post = manifest.find((p) => !done.has(p.id));
+  if (!post && postedToday) { warn(`Queue ran out after ${postedToday} post(s) today. Run autopost.py with a new YouTube link.`); save(); process.exit(DONE); }
   if (!post) fail("Queue is empty: no unposted Reels left. Run autopost.py with a new YouTube link.");
   if (!existsSync(post.video)) fail(`${post.id}: ${post.video} is missing from the repo.`);
   const left = manifest.filter((p) => !done.has(p.id)).length - 1;
   console.log(`Posting ${post.id} (${post.video}). ${left} left in queue after this.`);
-  if (DRY) { console.log("  ", rawUrl(post.video)); console.log(post.caption); return; }
+  if (DRY) { console.log("  ", rawUrl(post.video)); console.log(post.caption); process.exit(DONE); }
 
   const c = await ig("POST", `/${USER}/media`, {
     media_type: "REELS", video_url: rawUrl(post.video), caption: post.caption, share_to_feed: "true" });
@@ -99,7 +103,6 @@ async function main() {
   const pub = await ig("POST", `/${USER}/media_publish`, { creation_id: c.id });
   console.log(`✅ Published ${post.id} → media id ${pub.id}`);
   state.posted.push({ id: post.id, media_id: pub.id, date: todayIST });
-  state.lastDate = todayIST;
   rmSync(post.video); // posted: drop it from the tree so the queue folder stays small
   save();
   if (left < 3) warn(`Only ${left} Reel(s) left in the queue.`);

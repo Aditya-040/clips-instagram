@@ -18,10 +18,14 @@ Daily Instagram Reel poster for short clips cut from YouTube videos. Same struct
   clip's raw.githubusercontent URL (this repo must stay **public** for that), waits for `FINISHED`
   (up to 10 min), publishes, records `{id, media_id, date}` in `state/posted.json`, then deletes the
   posted mp4 from `queue/`.
-- One Reel per posting day. The posting day is IST rolling over at 6 AM, so a late run never double-posts.
+- Up to `POSTS_PER_DAY` (10) Reels per posting day, one every 30 minutes on the :00/:30 clock, all
+  inside one workflow run (12:00–4:30 PM IST). The run pulls before each post and commits after it;
+  `post.mjs` exits 3 when today's quota is used or the queue is empty, which ends the loop. The posting
+  day is IST rolling over at 6 AM.
 - Token: refreshed weekly and saved back to the `IG_ACCESS_TOKEN` secret via `GH_PAT`. Tokens are masked.
-- Triggers: push to `trigger/**` (daily Claude scheduled task at 7:15 PM IST), backup crons at
-  7:17 / 8:03 / 8:49 PM IST, and `workflow_dispatch` with `force` / `dry_run`.
+- Triggers: push to `trigger/**` (daily Claude scheduled task at 12:00 PM IST), backup crons at
+  12:10 / 1:40 PM IST (they only post what today is still missing), and `workflow_dispatch` with
+  `force` (one extra post) / `dry_run`.
 - Secrets: `IG_USER_ID`, `IG_ACCESS_TOKEN` (starts with `IG`, not `EAA`), `GH_PAT`
   (fine-grained, this repo only, "Secrets: Read and write").
 
