@@ -1,17 +1,15 @@
 name: Post Reel to Instagram
 
-# One run per day posts up to POSTS_PER_DAY Reels, one every 30 minutes
-# (on the :00 / :30 clock), starting when it is triggered.
+# A cron run every 30 minutes posts one Reel (up to POSTS_PER_DAY a day).
+# A manual run loops, posting every 30 minutes, until the quota or queue runs out.
 on:
   # Main trigger: a daily Claude scheduled task (12:00 PM IST) pushes trigger/request.txt.
   push:
     branches: [main]
     paths: ["trigger/**"]
   schedule:
-    # Backup only: GitHub's free scheduler often runs hours late. A backup that
-    # starts after the main run sees today's count and posts only what is missing.
-    - cron: "40 6 * * *" # 12:10 PM IST
-    - cron: "10 8 * * *" # 1:40 PM IST
+    # Non-stop: one Reel per run, every 30 minutes (GitHub may start these a few minutes late).
+    - cron: "5,35 * * * *"
   workflow_dispatch:
     inputs:
       force:
@@ -35,7 +33,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  POSTS_PER_DAY: ${{ inputs.per_day || 10 }}
+  # 46/day keeps under Instagram's 50-posts-per-24h API limit
+  POSTS_PER_DAY: ${{ inputs.per_day || 46 }}
+  # scheduled/push runs post one Reel and exit; a manual run loops every 30 min as before
+  ONE_SHOT: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   post:
@@ -70,6 +71,7 @@ jobs:
             [ $rc -eq 3 ] && break                       # today's quota done or queue empty
             [ $rc -ne 0 ] && fails=$((fails + 1))        # a failed post is retried next slot
             [ "$FORCE" = "true" ] && break               # force = one extra post, not a loop
+            [ "$ONE_SHOT" = "true" ] && break            # the next cron run posts the next one
             # next :00/:30 slot, at least 10 minutes away
             wait=$(( 1800 - $(date +%s) % 1800 )); [ $wait -lt 600 ] && wait=$((wait + 1800))
             echo "Next post in $((wait / 60)) min"; sleep $wait

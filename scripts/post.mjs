@@ -13,7 +13,7 @@ const REPO = process.env.GITHUB_REPOSITORY; // owner/name
 const BRANCH = process.env.GITHUB_REF_NAME || "main";
 const FORCE = process.env.FORCE === "true";
 const DRY = process.env.DRY_RUN === "true";
-const PER_DAY = Number(process.env.POSTS_PER_DAY || 10);
+const PER_DAY = Number(process.env.POSTS_PER_DAY || 46);
 const DONE = 3; // exit code: nothing left to post today, the workflow loop stops
 
 if (!USER || !TOKEN) fail("Missing IG_USER_ID or IG_ACCESS_TOKEN secret.");
@@ -92,7 +92,7 @@ async function main() {
   const done = new Set(state.posted.map((p) => p.id));
   const post = manifest.find((p) => !done.has(p.id));
   if (!post && postedToday) { warn(`Queue ran out after ${postedToday} post(s) today. Run autopost.py with a new YouTube link.`); save(); process.exit(DONE); }
-  if (!post) fail("Queue is empty: no unposted Reels left. Run autopost.py with a new YouTube link.");
+  if (!post) { warn("Queue is empty: waiting for autopost.py --refill to add Reels."); save(); process.exit(DONE); }
   if (!existsSync(post.video)) fail(`${post.id}: ${post.video} is missing from the repo.`);
   const left = manifest.filter((p) => !done.has(p.id)).length - 1;
   console.log(`Posting ${post.id} (${post.video}). ${left} left in queue after this.`);
