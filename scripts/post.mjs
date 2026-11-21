@@ -129,7 +129,15 @@ async function youtube(post) {
   const clean = (s) => s.replace(/[<>]/g, ""); // YouTube rejects angle brackets in titles/descriptions
   const lines = post.caption.split("\n").map((s) => s.trim()).filter(Boolean);
   const title = clean(lines[0].replace(/#\S+/g, "").trim()).slice(0, 90).trim() + " #Shorts";
-  const tags = [...post.caption.matchAll(/#(\w+)/g)].map((m) => m[1]).slice(0, 15);
+  // SEO: content keywords + hashtags as tags. Tags are searchable but never shown to viewers.
+  const tags = [];
+  for (const t of [...(post.keywords || []), ...[...post.caption.matchAll(/#(\w+)/g)].map((m) => m[1])]) {
+    const tag = clean(String(t)).replace(/,/g, " ").trim();
+    if (!tag || tags.some((x) => x.toLowerCase() === tag.toLowerCase())) continue;
+    // YouTube's 500-char tag budget counts a comma between tags and quotes around tags with spaces
+    if ([...tags, tag].reduce((n, x) => n + x.length + (x.includes(" ") ? 2 : 0) + 1, 0) > 480) break;
+    tags.push(tag);
+  }
   const video = readFileSync(post.video);
   const init = await fetch("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status", {
     method: "POST",
