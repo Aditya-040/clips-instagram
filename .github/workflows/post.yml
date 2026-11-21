@@ -1,32 +1,36 @@
 name: Post Reel to Instagram
 
-# A cron run every 30 minutes posts one Reel (up to POSTS_PER_DAY a day).
-# A manual run loops, posting every 30 minutes, until the quota or queue runs out.
+# Non-stop: one run posts a Reel every 30 minutes (:00/:30) for ~5h20m, then dispatches the next run
+# itself (chain=true), so posting never stops. GitHub's cron is unreliable (it skipped every
+# 30-minute slot for a day), so cron is only a backup restarter. Up to POSTS_PER_DAY a day.
 on:
-  # Main trigger: a daily Claude scheduled task (12:00 PM IST) pushes trigger/request.txt.
   push:
     branches: [main]
-    paths: ["trigger/**"]
+    paths: ["trigger/**"]   # the daily Claude scheduled task: also just (re)starts the chain
   schedule:
-    # Non-stop: one Reel per run, every 30 minutes (GitHub may start these a few minutes late).
-    - cron: "5,35 * * * *"
+    - cron: "20 */4 * * *"  # backup: restarts the chain if it ever breaks
   workflow_dispatch:
     inputs:
       force:
-        description: "Post even if today's quota is already used"
+        description: "Post one extra Reel now, even if today's quota is used"
         type: boolean
         default: false
       per_day:
-        description: "Reels allowed today (raise it to post a second batch the same day)"
+        description: "Reels allowed per posting day"
         type: number
-        default: 10
+        default: 46
       dry_run:
         description: "Dry run (show what would be posted, don't post)"
+        type: boolean
+        default: false
+      chain:
+        description: "Started by the previous run (waits for the next slot first)"
         type: boolean
         default: false
 
 permissions:
   contents: write
+  actions: write   # to dispatch the next run of the chain
 
 concurrency:
   group: instagram-post
@@ -35,8 +39,8 @@ concurrency:
 env:
   # 46/day keeps under Instagram's 50-posts-per-24h API limit
   POSTS_PER_DAY: ${{ inputs.per_day || 46 }}
-  # scheduled/push runs post one Reel and exit; a manual run loops every 30 min as before
-  ONE_SHOT: ${{ github.event_name != 'workflow_dispatch' }}
+  # a manual run posts right away; chained/cron/push runs wait for the next slot (no double post)
+  WAIT_FIRST: ${{ github.event_name != 'workflow_dispatch' || inputs.chain }}
 
 jobs:
   post:
@@ -49,7 +53,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-      - name: Publish Reels every 30 minutes
+      - name: Publish a Reel every 30 minutes
         env:
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
@@ -59,21 +63,24 @@ jobs:
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
           FORCE: ${{ inputs.force }}
           DRY_RUN: ${{ inputs.dry_run }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "clips-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          next_slot() { w=$(( 1800 - $(date +%s) % 1800 )); [ $w -lt 600 ] && w=$((w + 1800)); echo $w; }
+          deadline=$(( $(date +%s) + 320 * 60 ))
+          if [ "$WAIT_FIRST" = "true" ]; then w=$(next_slot); echo "First post in $((w / 60)) min"; sleep $w; fi
           fails=0
-          for i in $(seq 1 $((POSTS_PER_DAY + 2))); do
+          while :; do
             git pull -q --rebase origin main   # latest state: never re-post what another run posted
             rc=0; node scripts/post.mjs || rc=$?
             git add -A state queue
             git diff --cached --quiet || (git commit -qm "Posted $(date -u +%FT%H:%MZ)" && git pull -q --rebase origin main && git push -q)
-            [ $rc -eq 3 ] && break                       # today's quota done or queue empty
-            [ $rc -ne 0 ] && fails=$((fails + 1))        # a failed post is retried next slot
-            [ "$FORCE" = "true" ] && break               # force = one extra post, not a loop
-            [ "$ONE_SHOT" = "true" ] && break            # the next cron run posts the next one
-            # next :00/:30 slot, at least 10 minutes away
-            wait=$(( 1800 - $(date +%s) % 1800 )); [ $wait -lt 600 ] && wait=$((wait + 1800))
-            echo "Next post in $((wait / 60)) min"; sleep $wait
+            [ $rc -ne 0 ] && [ $rc -ne 3 ] && fails=$((fails + 1))  # 3 = quota used / queue empty: try next slot
+            [ "$FORCE" = "true" ] || [ "$DRY_RUN" = "true" ] && exit $([ $fails -eq 0 ] && echo 0 || echo 1)
+            w=$(next_slot)
+            [ $(( $(date +%s) + w )) -gt $deadline ] && break
+            echo "Next post in $((w / 60)) min"; sleep $w
           done
+          gh workflow run post.yml --ref main -f chain=true -f per_day="$POSTS_PER_DAY" && echo "Next run of the chain dispatched"
           [ $fails -eq 0 ]

@@ -20,14 +20,15 @@ Daily Instagram Reel poster for short clips cut from YouTube videos. Same struct
   clip's raw.githubusercontent URL (plus `cover_url` for the cover jpg) (this repo must stay **public** for that), waits for `FINISHED`
   (up to 10 min), publishes, records `{id, media_id, date}` in `state/posted.json`, then deletes the
   posted mp4 from `queue/`.
-- Non-stop: a cron run at :05/:35 every hour posts one Reel (`ONE_SHOT`), up to `POSTS_PER_DAY` (46,
+- Non-stop: one run posts every 30 min for ~5h20m, then dispatches the next run (`chain=true`);
+  cron (every 4 h) only restarts a broken chain. Up to `POSTS_PER_DAY` (46,
   under Instagram's 50/24h API limit) per posting day (IST, rolling over at 6 AM). A manual
-  `workflow_dispatch` run still loops every 30 min. `post.mjs` exits 3 when the quota is used or the
+  `workflow_dispatch` posts at once; chained/cron/push runs wait for the next slot. `post.mjs` exits 3 when the quota is used or the
   queue is empty (a warning, not a failure). The queue is refilled from the user's PC by
   `autopost.py --refill` (hourly Windows task): links.txt first, else Creative Commons GTA 6 videos,
   credited to their channel.
 - Token: refreshed weekly and saved back to the `IG_ACCESS_TOKEN` secret via `GH_PAT`. Tokens are masked.
-- Triggers: the 30-minute cron, push to `trigger/**` (daily Claude scheduled task, one post), and
+- Triggers: the chain itself, the 4-hourly backup cron, push to `trigger/**` (daily Claude scheduled task, one post), and
   `workflow_dispatch` with `per_day` / `force` (one extra post) / `dry_run`.
 - Secrets: `IG_USER_ID`, `IG_ACCESS_TOKEN` (starts with `IG`, not `EAA`), `GH_PAT`
   (fine-grained, this repo only, "Secrets: Read and write").
