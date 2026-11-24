@@ -1,0 +1,29 @@
+name: Reel insights
+
+# Manual: prints views/reach/likes for the last N posted Reels and their YouTube Shorts.
+on:
+  workflow_dispatch:
+    inputs:
+      n:
+        description: "How many recent posts"
+        type: number
+        default: 40
+
+permissions:
+  contents: read
+
+jobs:
+  insights:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: node scripts/insights.mjs
+        env:
+          N: ${{ inputs.n }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
