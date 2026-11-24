@@ -13,7 +13,7 @@ const REPO = process.env.GITHUB_REPOSITORY; // owner/name
 const BRANCH = process.env.GITHUB_REF_NAME || "main";
 const FORCE = process.env.FORCE === "true";
 const DRY = process.env.DRY_RUN === "true";
-const PER_DAY = Number(process.env.POSTS_PER_DAY || 46);
+const PER_DAY = Number(process.env.POSTS_PER_DAY || 16);
 const DONE = 3; // exit code: nothing left to post today, the workflow loop stops
 
 if (!USER || !TOKEN) fail("Missing IG_USER_ID or IG_ACCESS_TOKEN secret.");

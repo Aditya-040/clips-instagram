@@ -18,7 +18,7 @@ on:
       per_day:
         description: "Reels allowed per posting day"
         type: number
-        default: 46
+        default: 16
       dry_run:
         description: "Dry run (show what would be posted, don't post)"
         type: boolean
@@ -38,7 +38,10 @@ concurrency:
 
 env:
   # 46/day keeps under Instagram's 50-posts-per-24h API limit
-  POSTS_PER_DAY: ${{ inputs.per_day || 46 }}
+  # insights 2026-11-24: 20+ posts/day spread reach thin (median 138 views). One per hour, 16 per
+  # posting day (from 6 AM IST), so nothing goes out in the dead hours of the night.
+  POSTS_PER_DAY: ${{ inputs.per_day || 16 }}
+  SLOT: 3600
   # a manual run posts right away; chained/cron/push runs wait for the next slot (no double post)
   WAIT_FIRST: ${{ github.event_name != 'workflow_dispatch' || inputs.chain }}
 
@@ -67,7 +70,7 @@ jobs:
         run: |
           git config user.name "clips-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          next_slot() { w=$(( 1800 - $(date +%s) % 1800 )); [ $w -lt 600 ] && w=$((w + 1800)); echo $w; }
+          next_slot() { w=$(( SLOT - $(date +%s) % SLOT )); [ $w -lt 600 ] && w=$((w + SLOT)); echo $w; }
           deadline=$(( $(date +%s) + 320 * 60 ))
           if [ "$WAIT_FIRST" = "true" ]; then w=$(next_slot); echo "First post in $((w / 60)) min"; sleep $w; fi
           fails=0
