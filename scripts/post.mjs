@@ -107,7 +107,16 @@ async function main() {
   const entry = { id: post.id, media_id: pub.id, date: todayIST, ...(FORCE && { forced: true }) };
   state.posted.push(entry);
   save(); // the Reel is live: record it before anything else can fail
-  try {
+  try { // the post's link (campaigns need it submitted within 30 minutes)
+    entry.permalink = (await ig("GET", `/${pub.id}`, { fields: "permalink" })).permalink;
+    console.log(`🔗 ${entry.permalink}`);
+    console.log(`::notice title=${post.id} posted::${entry.permalink}`);
+  } catch (e) { warn(`${post.id}: couldn't read the post link: ${e.message}`); }
+  if (post.comment) { // campaign comment CTA (pinning has no API: pin it in the app)
+    try { await ig("POST", `/${pub.id}/comments`, { message: post.comment }); console.log(`💬 commented: ${post.comment}`); }
+    catch (e) { warn(`${post.id}: comment failed, add it by hand: ${e.message}`); }
+  }
+  if (!post.campaign) try { // campaign Reels pay on Instagram/TikTok only: no YouTube copy
     const yt = await youtube(post);
     if (yt) { entry.youtube = yt.id; console.log(`▶️ YouTube Short ${yt.id} (${yt.privacy})`); }
   } catch (e) { warn(`${post.id}: YouTube upload failed (the Reel is posted): ${e.message}`); }
